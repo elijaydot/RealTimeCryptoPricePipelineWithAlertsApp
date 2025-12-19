@@ -22,28 +22,26 @@ st.set_page_config(
 
 # --- Configuration ---
 def get_secret(secret_key, default=None):
-    """
-    Safely retrieves a secret, checking environment variables first,
-    then Streamlit secrets.
-    """
+    """Safely retrieves a secret, checking env vars then Streamlit secrets."""
     value = os.getenv(secret_key)
-    if value:
+    if value is not None:
         return value
-    try:
-        if st.secrets.has_key(secret_key):
-            return st.secrets[secret_key]
-    except Exception: # Catches potential FileNotFoundError for secrets.toml
-        pass
+    if hasattr(st, 'secrets') and secret_key in st.secrets:
+        return st.secrets[secret_key]
     return default
 
-DB_HOST = get_secret("DB_HOST")
-DB_PASSWORD = get_secret("DB_PASSWORD")
-DB_PORT = get_secret("DB_PORT", 5432)
+DB_HOST = get_secret("DB_HOST") # From Supabase Connection Pooler
+DB_PORT = get_secret("DB_PORT", 6543) # Pooler port is typically 6543
+DB_USER = get_secret("DB_USER", "postgres") # Default Supabase user
+DB_PASSWORD = get_secret("DB_PASSWORD") # Your project's DB password
+DB_NAME = get_secret("DB_NAME", "postgres") # Default Supabase DB name
 
 ENABLE_EMAIL_ALERTS = str(get_secret("ENABLE_EMAIL_ALERTS", "false")).lower() == 'true'
 ENABLE_TELEGRAM_ALERTS = str(get_secret("ENABLE_TELEGRAM_ALERTS", "false")).lower() == 'true'
 
-EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, EMAIL_RECEIVER_ADDRESS = get_secret("EMAIL_SENDER_ADDRESS"), get_secret("EMAIL_SENDER_PASSWORD"), get_secret("EMAIL_RECEIVER_ADDRESS")
+EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, EMAIL_RECEIVER_ADDRESS = (
+    get_secret("EMAIL_SENDER_ADDRESS"), get_secret("EMAIL_SENDER_PASSWORD"), get_secret("EMAIL_RECEIVER_ADDRESS")
+)
 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID = get_secret("TELEGRAM_BOT_TOKEN"), get_secret("TELEGRAM_CHAT_ID")
 
 # API and Alerting Configuration
@@ -57,8 +55,8 @@ ALERT_TIMEFRAME_HOURS = 1.0
 def get_engine():
     """Creates and returns a SQLAlchemy engine."""
     try:
-        # Use the connection pooler URI format for Supabase
-        conn_string = f"postgresql://postgres:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/postgres"
+        # Build the connection string using credentials for the Supabase Connection Pooler
+        conn_string = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
         engine = create_engine(conn_string)
         
         # On first run, create tables if they don't exist.
@@ -66,7 +64,7 @@ def get_engine():
 
         return engine
     except Exception as e:
-        st.error(f"Supabase connection failed: {e}. Ensure DB_HOST, DB_PASSWORD, and DB_PORT are set correctly in your secrets.")
+        st.error(f"Supabase connection failed: {e}. Please verify your DB_HOST, DB_PASSWORD, and DB_PORT in your secrets, ensuring you are using the Connection Pooler details.")
         return None
 
 def setup_database_tables(engine):

@@ -149,15 +149,21 @@ pip install requests pandas sqlalchemy psycopg2-binary python-dotenv tenacity st
 
 ### Using Supabase as the Database
 
-If you are using Supabase, your configuration is slightly different. You need the **direct database connection info**, not the API keys.
+If you are using Supabase, you **must** use the **Connection Pooler** details for a stable deployment on platforms like Streamlit Cloud.
 
-1.  In your Supabase project, go to **Project Settings** > **Database**.
-2.  Under **Connection string**, find the `Host`. It will look like `db.xxxxxxxx.supabase.co`.
-3.  Your `.env` file should look like this:
+1.  In your Supabase project, go to **Project Settings** (gear icon) > **Database**.
+2.  Scroll down to the **Connection pooling** section.
+3.  Ensure the `Transaction` mode is selected.
+4.  You will see a URI. Note the **Host** and **Port** (`6543`). The host will look something like `aws-0-us-east-1.pooler.supabase.com`.
+5.  Your `.env` file (for local testing) or Streamlit Secrets (for deployment) should use these values:
 
     ```ini
-    # .env file for Supabase
-    DB_HOST="db.xxxxxxxx.supabase.co"
+    # .env file for Supabase Connection Pooler
+    # Use the HOST from the "Connection pooling" section
+    DB_HOST="aws-0-us-east-1.pooler.supabase.com"
+    # Use the PORT from the "Connection pooling" section
+    DB_PORT="6543"
+    # This is your project's database password
     DB_PASSWORD="your_supabase_project_password"
     ```
 
