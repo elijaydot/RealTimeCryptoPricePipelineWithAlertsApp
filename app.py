@@ -248,9 +248,9 @@ else:
         if not email or '@' not in email:
             return "your.email@example.com"
         local_part, domain = email.split('@')
-        if len(local_part) <= 3:
+        if len(local_part) <= 1:
             return f"{local_part[0]}***@{domain}"
-        return f"{local_part[:3]}***@{domain}"
+        return f"{local_part[:1]}***@{domain}"
 
     def mask_telegram_id(chat_id):
         """Masks a Telegram chat ID for display."""
@@ -259,7 +259,7 @@ else:
         chat_id_str = str(chat_id)
         if len(chat_id_str) <= 4:
             return f"{chat_id_str[0]}***"
-        return f"{chat_id_str[:2]}***{chat_id_str[-2:]}"
+        return f"{chat_id_str[:0]}***{chat_id_str[-1:]}"
 
     # --- Tabbed Layout ---
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Price Analysis", "🚨 System Logs", "🔔 Alert Management"])
