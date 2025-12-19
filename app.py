@@ -21,20 +21,30 @@ st.set_page_config(
 )
 
 # --- Configuration ---
-# Use Streamlit secrets for deployment, with .env as a fallback for local development
-DB_HOST = os.getenv("DB_HOST", st.secrets.get("DB_HOST")) # e.g., db.xxxxxxxx.supabase.co
-DB_PASSWORD = os.getenv("DB_PASSWORD", st.secrets.get("DB_PASSWORD"))
-DB_PORT = os.getenv("DB_PORT", st.secrets.get("DB_PORT", 5432)) # Default to 5432, but use 6543 for pooler
+def get_secret(secret_key, default=None):
+    """
+    Safely retrieves a secret, checking environment variables first,
+    then Streamlit secrets.
+    """
+    value = os.getenv(secret_key)
+    if value:
+        return value
+    try:
+        if st.secrets.has_key(secret_key):
+            return st.secrets[secret_key]
+    except Exception: # Catches potential FileNotFoundError for secrets.toml
+        pass
+    return default
 
-ENABLE_EMAIL_ALERTS = os.getenv("ENABLE_EMAIL_ALERTS", st.secrets.get("ENABLE_EMAIL_ALERTS", "false")).lower() == 'true'
-ENABLE_TELEGRAM_ALERTS = os.getenv("ENABLE_TELEGRAM_ALERTS", st.secrets.get("ENABLE_TELEGRAM_ALERTS", "false")).lower() == 'true'
+DB_HOST = get_secret("DB_HOST")
+DB_PASSWORD = get_secret("DB_PASSWORD")
+DB_PORT = get_secret("DB_PORT", 5432)
 
-EMAIL_SENDER_ADDRESS = os.getenv("EMAIL_SENDER_ADDRESS", st.secrets.get("EMAIL_SENDER_ADDRESS"))
-EMAIL_SENDER_PASSWORD = os.getenv("EMAIL_SENDER_PASSWORD", st.secrets.get("EMAIL_SENDER_PASSWORD"))
-EMAIL_RECEIVER_ADDRESS = os.getenv("EMAIL_RECEIVER_ADDRESS", st.secrets.get("EMAIL_RECEIVER_ADDRESS"))
+ENABLE_EMAIL_ALERTS = str(get_secret("ENABLE_EMAIL_ALERTS", "false")).lower() == 'true'
+ENABLE_TELEGRAM_ALERTS = str(get_secret("ENABLE_TELEGRAM_ALERTS", "false")).lower() == 'true'
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", st.secrets.get("TELEGRAM_BOT_TOKEN"))
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", st.secrets.get("TELEGRAM_CHAT_ID"))
+EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, EMAIL_RECEIVER_ADDRESS = get_secret("EMAIL_SENDER_ADDRESS"), get_secret("EMAIL_SENDER_PASSWORD"), get_secret("EMAIL_RECEIVER_ADDRESS")
+TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID = get_secret("TELEGRAM_BOT_TOKEN"), get_secret("TELEGRAM_CHAT_ID")
 
 # API and Alerting Configuration
 PRICE_DROP_ALERT_PERCENTAGE = -5.0
