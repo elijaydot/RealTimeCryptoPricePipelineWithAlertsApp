@@ -66,13 +66,42 @@ def get_supabase_client():
 # --- Notification Functions ---
 def send_email_alert(subject, body):
     """Sends an email alert."""
-    # Implementation is the same as your original script
-    pass
+    if not all([EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, EMAIL_RECEIVER_ADDRESS]):
+        st.warning("Email credentials not fully configured. Skipping email alert.")
+        return
+
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_SENDER_ADDRESS
+    msg['To'] = EMAIL_RECEIVER_ADDRESS
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD)
+            server.send_message(msg)
+            print("📧 Email alert sent successfully.")
+    except Exception as e:
+        st.error(f"Failed to send email alert: {e}")
 
 def send_telegram_alert(message):
     """Sends a message to a Telegram chat."""
-    # Implementation is the same as your original script
-    pass
+    if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+        st.warning("Telegram credentials not fully configured. Skipping Telegram alert.")
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        print("💬 Telegram alert sent successfully.")
+    except Exception as e:
+        st.error(f"Failed to send Telegram alert: {e}")
 
 def send_alert(message):
     """Dispatches an alert to all configured channels."""
