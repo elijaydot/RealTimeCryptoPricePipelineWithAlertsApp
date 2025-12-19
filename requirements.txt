@@ -1,8 +1,7 @@
 requests
 pandas
-sqlalchemy
-psycopg2-binary
 python-dotenv
 streamlit
 plotly
 streamlit-autorefresh
+supabase

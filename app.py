@@ -1,12 +1,12 @@
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, text
 import os
 import smtplib
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 import streamlit as st
+from supabase import create_client, Client
 import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
@@ -30,11 +30,8 @@ def get_secret(secret_key, default=None):
         return st.secrets[secret_key]
     return default
 
-DB_HOST = get_secret("DB_HOST") # From Supabase Connection Pooler
-DB_PORT = get_secret("DB_PORT", 6543) # Pooler port is typically 6543
-DB_USER = get_secret("DB_USER", "postgres") # Default Supabase user
-DB_PASSWORD = get_secret("DB_PASSWORD") # Your project's DB password
-DB_NAME = get_secret("DB_NAME", "postgres") # Default Supabase DB name
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
 
 ENABLE_EMAIL_ALERTS = str(get_secret("ENABLE_EMAIL_ALERTS", "false")).lower() == 'true'
 ENABLE_TELEGRAM_ALERTS = str(get_secret("ENABLE_TELEGRAM_ALERTS", "false")).lower() == 'true'
@@ -52,43 +49,19 @@ ALERT_TIMEFRAME_HOURS = 1.0
 # --- Database Connection ---
 # Use st.cache_resource to only create the connection once
 @st.cache_resource
-def get_engine():
-    """Creates and returns a SQLAlchemy engine."""
-    try:
-        # Build the connection string using credentials for the Supabase Connection Pooler
-        conn_string = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        engine = create_engine(conn_string)
-        
-        # On first run, create tables if they don't exist.
-        setup_database_tables(engine)
-
-        return engine
-    except Exception as e:
-        st.error(f"Supabase connection failed: {e}. Please verify your DB_HOST, DB_PASSWORD, and DB_PORT in your secrets, ensuring you are using the Connection Pooler details.")
+def get_supabase_client():
+    """Creates and returns a Supabase client, handling potential errors."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        st.error("Supabase URL or Key is not configured. Please set SUPABASE_URL and SUPABASE_KEY in your secrets.")
         return None
-
-def setup_database_tables(engine):
-    """Initializes tables in the Supabase database if they don't exist."""
     try:
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS coin_price_data (
-                    id SERIAL PRIMARY KEY,
-                    coin_id TEXT, symbol TEXT, name TEXT,
-                    current_price DOUBLE PRECISION, market_cap DOUBLE PRECISION, total_volume DOUBLE PRECISION,
-                    price_change_percentage_24h DOUBLE PRECISION, last_updated TEXT, ingestion_timestamp TEXT
-                )
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS api_error_logs (
-                    id SERIAL PRIMARY KEY, error_message TEXT, source TEXT, timestamp TEXT
-                )
-            """))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_coin_price_data_coin_id ON coin_price_data (coin_id);"))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_coin_price_data_ingestion_timestamp ON coin_price_data (ingestion_timestamp);"))
-            conn.commit()
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # Test connection by fetching a small amount of data
+        client.table('coin_price_data').select('id').limit(1).execute()
+        return client
     except Exception as e:
-        st.error(f"Failed to create database tables: {e}")
+        st.error(f"Supabase connection failed: {e}. Please verify your Supabase URL and Key.")
+        return None
 
 # --- Notification Functions ---
 def send_email_alert(subject, body):
@@ -110,73 +83,59 @@ def send_alert(message):
         send_telegram_alert(message)
 
 # --- Initialize Connection ---
-engine = get_engine()
+supabase_client = get_supabase_client()
 
 # --- Data Loading Functions ---
 # Use st.cache_data to cache the data itself. It will only rerun if the input (ttl) changes.
 # ttl = Time To Live. This clears the cache every 60 seconds, forcing a data refresh.
 @st.cache_data(ttl=60)
-def load_price_data(_engine):
+def load_price_data(_client: Client):
     """Loads historical price data from the database."""
-    if _engine is None:
+    if _client is None:
         return pd.DataFrame()
     try:
-        with _engine.connect() as conn:
-            # --- PERFORMANCE OPTIMIZATION ---
-            # Only load the last 30 days of data by default to keep the dashboard snappy.
-            # The ::timestamp cast is necessary because the column is TEXT.
-            query = text(f"""
-                SELECT * FROM coin_price_data WHERE ingestion_timestamp::timestamp >= NOW() - INTERVAL '30 days' ORDER BY ingestion_timestamp ASC
-            """)
-            df = pd.read_sql(query, conn)
-            # Convert timestamp strings to datetime objects for plotting
-            df['ingestion_timestamp'] = pd.to_datetime(df['ingestion_timestamp'], format='ISO8601')
-            return df
+        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        response = _client.table('coin_price_data').select('*').gte('ingestion_timestamp', thirty_days_ago).order('ingestion_timestamp', desc=False).execute()
+        df = pd.DataFrame(response.data)
+        if not df.empty:
+            df['ingestion_timestamp'] = pd.to_datetime(df['ingestion_timestamp'])
+        return df
     except Exception as e:
         st.error(f"Failed to load price data: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
-def load_latest_data(_engine):
+def load_latest_data(_client: Client):
     """Loads the most recent entry for each coin."""
-    if _engine is None:
+    if _client is None:
         return pd.DataFrame()
-    query = text("""
-        WITH latest_records AS (
-            SELECT *, ROW_NUMBER() OVER(PARTITION BY coin_id ORDER BY ingestion_timestamp DESC) as rn
-            FROM coin_price_data
-        )
-        SELECT coin_id, name, symbol, current_price, market_cap, total_volume, price_change_percentage_24h
-        FROM latest_records
-        WHERE rn = 1;
-    """)
     try:
-        with _engine.connect() as conn:
-            return pd.read_sql(query, conn)
+        # Call the PostgreSQL function we created
+        response = _client.rpc('get_latest_coin_data', {}).execute()
+        return pd.DataFrame(response.data)
     except Exception as e:
         st.error(f"Failed to load latest data: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
-def load_alert_logs(_engine):
+def load_alert_logs(_client: Client):
     """Loads alert and error logs from the database."""
-    if _engine is None:
+    if _client is None:
         return pd.DataFrame()
     # This table might not exist if no errors have occurred yet.
     # We will handle the error gracefully.
     try:
-        with _engine.connect() as conn:
-            df = pd.read_sql("SELECT * FROM api_error_logs ORDER BY timestamp DESC", conn)
-            return df
+        response = _client.table('api_error_logs').select('*').order('timestamp', desc=True).execute()
+        return pd.DataFrame(response.data)
     except Exception:
         # If the table doesn't exist, just return an empty DataFrame.
         return pd.DataFrame()
 
 # --- Pipeline Logic (Integrated into the app) ---
 @st.cache_data(ttl=300) # Run this logic at most once every 5 minutes
-def run_pipeline_logic(_engine):
+def run_pipeline_logic(_client: Client):
     """Main function to fetch, process, store, and alert on crypto data."""
-    if not _engine:
+    if not _client:
         st.error("Pipeline logic skipped due to database connection failure.")
         return "Pipeline Failed"
 
@@ -205,12 +164,13 @@ def run_pipeline_logic(_engine):
         # check_alerts(df, _engine)
         
         # Append new data to the database table
-        df.to_sql("coin_price_data", _engine, if_exists="append", index=False)
+        records_to_insert = df.to_dict(orient='records')
+        _client.table('coin_price_data').insert(records_to_insert).execute()
         return f"Pipeline run successful at {datetime.now().strftime('%H:%M:%S')}"
 
     except requests.exceptions.RequestException as e:
         error_details = {"error_message": str(e), "source": "CoinGecko API", "timestamp": datetime.utcnow().isoformat()}
-        pd.DataFrame([error_details]).to_sql("api_error_logs", _engine, if_exists="append", index=False)
+        _client.table('api_error_logs').insert(error_details).execute()
         return f"API Error: {e}"
     except Exception as e:
         return f"An unexpected Error occurred in pipeline: {e}"
@@ -225,12 +185,12 @@ st_autorefresh(interval=65 * 1000, key="data_refresher")
 
 # Load data
 # Trigger the pipeline logic. Caching ensures it doesn't run on every single interaction.
-pipeline_status = run_pipeline_logic(engine)
+pipeline_status = run_pipeline_logic(supabase_client)
 st.sidebar.write(pipeline_status)
 
-price_df = load_price_data(engine)
-latest_df = load_latest_data(engine)
-logs_df = load_alert_logs(engine)
+price_df = load_price_data(supabase_client)
+latest_df = load_latest_data(supabase_client)
+logs_df = load_alert_logs(supabase_client)
 
 if price_df.empty or latest_df.empty:
     st.warning("No data found in the database. Is the data pipeline running?")
