@@ -242,6 +242,25 @@ logs_df = load_alert_logs(supabase_client)
 if price_df.empty or latest_df.empty:
     st.warning("No data found in the database. Is the data pipeline running?")
 else:
+    # --- Helper functions for UI masking ---
+    def mask_email(email):
+        """Masks an email address for display."""
+        if not email or '@' not in email:
+            return "your.email@example.com"
+        local_part, domain = email.split('@')
+        if len(local_part) <= 3:
+            return f"{local_part[0]}***@{domain}"
+        return f"{local_part[:3]}***@{domain}"
+
+    def mask_telegram_id(chat_id):
+        """Masks a Telegram chat ID for display."""
+        if not chat_id or not str(chat_id).isdigit():
+            return "Your Chat ID"
+        chat_id_str = str(chat_id)
+        if len(chat_id_str) <= 4:
+            return f"{chat_id_str[0]}***"
+        return f"{chat_id_str[:2]}***{chat_id_str[-2:]}"
+
     # --- Tabbed Layout ---
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Price Analysis", "🚨 System Logs", "🔔 Alert Management"])
 
@@ -424,9 +443,9 @@ else:
 
         st.subheader("Email Alerts")
         st.toggle("Enable Email Alerts", key='email_alerts_enabled')
-        st.text_input("Your Email Address", key='user_email', placeholder=EMAIL_RECEIVER_ADDRESS or "your.email@example.com", disabled=not st.session_state.email_alerts_enabled)
+        st.text_input("Your Email Address", key='user_email', placeholder=mask_email(EMAIL_RECEIVER_ADDRESS), disabled=not st.session_state.email_alerts_enabled)
 
         st.subheader("Telegram Alerts")
         st.toggle("Enable Telegram Alerts", key='telegram_alerts_enabled')
-        st.text_input("Your Telegram Chat ID", key='user_telegram_id', placeholder=TELEGRAM_CHAT_ID or "Your Chat ID", disabled=not st.session_state.telegram_alerts_enabled)
+        st.text_input("Your Telegram Chat ID", key='user_telegram_id', placeholder=mask_telegram_id(TELEGRAM_CHAT_ID), disabled=not st.session_state.telegram_alerts_enabled)
         st.caption("Note: To get your Chat ID, message the `@userinfobot` on Telegram.")
