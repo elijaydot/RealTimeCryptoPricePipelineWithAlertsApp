@@ -66,14 +66,18 @@ def get_supabase_client():
 # --- Notification Functions ---
 def send_email_alert(subject, body):
     """Sends an email alert."""
-    if not all([EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, EMAIL_RECEIVER_ADDRESS]):
+    # Use the user's email if provided, otherwise fall back to the default receiver.
+    user_email = st.session_state.get('user_email', '').strip()
+    recipient = user_email if user_email else EMAIL_RECEIVER_ADDRESS
+
+    if not all([EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, recipient]) or not user_email:
         st.warning("Email credentials not fully configured. Skipping email alert.")
         return
 
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = EMAIL_SENDER_ADDRESS
-    msg['To'] = EMAIL_RECEIVER_ADDRESS
+    msg['To'] = recipient
 
     try:
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
@@ -86,13 +90,17 @@ def send_email_alert(subject, body):
 
 def send_telegram_alert(message):
     """Sends a message to a Telegram chat."""
-    if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+    # Use the user's chat ID if provided, otherwise fall back to the default.
+    user_chat_id = st.session_state.get('user_telegram_id', '').strip()
+    chat_id = user_chat_id if user_chat_id else TELEGRAM_CHAT_ID
+
+    if not all([TELEGRAM_BOT_TOKEN, chat_id]) or not user_chat_id:
         st.warning("Telegram credentials not fully configured. Skipping Telegram alert.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": message,
         "parse_mode": "Markdown"
     }
@@ -106,9 +114,9 @@ def send_telegram_alert(message):
 def send_alert(message):
     """Dispatches an alert to all configured channels."""
     st.toast(message) # Always show a toast in the app
-    if ENABLE_EMAIL_ALERTS:
+    if st.session_state.get('email_alerts_enabled', False):
         send_email_alert("Crypto Price Alert!", message)
-    if ENABLE_TELEGRAM_ALERTS:
+    if st.session_state.get('telegram_alerts_enabled', False):
         send_telegram_alert(message)
 
 # --- Initialize Connection ---
@@ -212,6 +220,16 @@ st.markdown(f"_Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_")
 # Run the auto-refresh component every 65 seconds (65000 milliseconds)
 st_autorefresh(interval=65 * 1000, key="data_refresher")
 
+# --- Initialize Session State for Alert Toggles ---
+if 'email_alerts_enabled' not in st.session_state:
+    st.session_state.email_alerts_enabled = ENABLE_EMAIL_ALERTS
+if 'telegram_alerts_enabled' not in st.session_state:
+    st.session_state.telegram_alerts_enabled = ENABLE_TELEGRAM_ALERTS
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = "" # Initialize as empty
+if 'user_telegram_id' not in st.session_state:
+    st.session_state.user_telegram_id = "" # Initialize as empty
+
 # Load data
 # Trigger the pipeline logic. Caching ensures it doesn't run on every single interaction.
 pipeline_status = run_pipeline_logic(supabase_client)
@@ -225,7 +243,7 @@ if price_df.empty or latest_df.empty:
     st.warning("No data found in the database. Is the data pipeline running?")
 else:
     # --- Tabbed Layout ---
-    tab1, tab2, tab3 = st.tabs(["📊 Overview", "📈 Price Analysis", "🚨 System Logs"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Price Analysis", "🚨 System Logs", "🔔 Alert Management"])
 
     with tab1:
         # --- Overview Tab ---
@@ -398,3 +416,17 @@ else:
             )
         else:
             st.info("No alerts or errors have been logged yet. Everything looks good!")
+
+    with tab4:
+        # --- Alert Management Tab ---
+        st.header("🔔 Configure Your Personal Alerts")
+        st.write("Enable and configure email or Telegram alerts. Your settings are saved for your current session.")
+
+        st.subheader("Email Alerts")
+        st.toggle("Enable Email Alerts", key='email_alerts_enabled')
+        st.text_input("Your Email Address", key='user_email', placeholder=EMAIL_RECEIVER_ADDRESS or "your.email@example.com", disabled=not st.session_state.email_alerts_enabled)
+
+        st.subheader("Telegram Alerts")
+        st.toggle("Enable Telegram Alerts", key='telegram_alerts_enabled')
+        st.text_input("Your Telegram Chat ID", key='user_telegram_id', placeholder=TELEGRAM_CHAT_ID or "Your Chat ID", disabled=not st.session_state.telegram_alerts_enabled)
+        st.caption("Note: To get your Chat ID, message the `@userinfobot` on Telegram.")
