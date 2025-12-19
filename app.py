@@ -24,6 +24,7 @@ st.set_page_config(
 # Use Streamlit secrets for deployment, with .env as a fallback for local development
 DB_HOST = os.getenv("DB_HOST", st.secrets.get("DB_HOST")) # e.g., db.xxxxxxxx.supabase.co
 DB_PASSWORD = os.getenv("DB_PASSWORD", st.secrets.get("DB_PASSWORD"))
+DB_PORT = os.getenv("DB_PORT", st.secrets.get("DB_PORT", 5432)) # Default to 5432, but use 6543 for pooler
 
 ENABLE_EMAIL_ALERTS = os.getenv("ENABLE_EMAIL_ALERTS", st.secrets.get("ENABLE_EMAIL_ALERTS", "false")).lower() == 'true'
 ENABLE_TELEGRAM_ALERTS = os.getenv("ENABLE_TELEGRAM_ALERTS", st.secrets.get("ENABLE_TELEGRAM_ALERTS", "false")).lower() == 'true'
@@ -46,8 +47,8 @@ ALERT_TIMEFRAME_HOURS = 1.0
 def get_engine():
     """Creates and returns a SQLAlchemy engine."""
     try:
-        # Supabase provides a single 'postgres' database. We connect to it directly.
-        conn_string = f"postgresql://postgres:{DB_PASSWORD}@{DB_HOST}:5432/postgres"
+        # Use the connection pooler URI format for Supabase
+        conn_string = f"postgresql://postgres:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/postgres"
         engine = create_engine(conn_string)
         
         # On first run, create tables if they don't exist.
@@ -55,7 +56,7 @@ def get_engine():
 
         return engine
     except Exception as e:
-        st.error(f"Supabase connection failed: {e}. Ensure DB_HOST and DB_PASSWORD are set in your secrets/environment.")
+        st.error(f"Supabase connection failed: {e}. Ensure DB_HOST, DB_PASSWORD, and DB_PORT are set correctly in your secrets.")
         return None
 
 def setup_database_tables(engine):
