@@ -416,13 +416,30 @@ else:
                mime='text/csv',
             )
 
-            # Select and format a subset of columns for better readability
-            display_df = chart_df[['ingestion_timestamp', 'current_price', 'market_cap', 'total_volume']].copy()
-            display_df['current_price'] = display_df['current_price'].apply(lambda x: f"${x:,.2f}")
-            display_df['market_cap'] = display_df['market_cap'].apply(lambda x: f"${x:,.0f}")
-            display_df['total_volume'] = display_df['total_volume'].apply(lambda x: f"${x:,.0f}")
-            
-            st.dataframe(display_df.set_index('ingestion_timestamp'), use_container_width=True)
+            if not chart_df.empty:
+                # Select and format a subset of columns for better readability
+                display_df = chart_df[['ingestion_timestamp', 'current_price', 'market_cap', 'total_volume']].copy()
+                display_df['current_price'] = display_df['current_price'].apply(lambda x: f"${x:,.2f}")
+                display_df['market_cap'] = display_df['market_cap'].apply(lambda x: f"${x:,.0f}")
+                display_df['total_volume'] = display_df['total_volume'].apply(lambda x: f"${x:,.0f}")
+                display_df = display_df.set_index('ingestion_timestamp')
+
+                # --- Pagination Logic ---
+                rows_per_page = 15
+                total_rows = len(display_df)
+                total_pages = (total_rows // rows_per_page) + (1 if total_rows % rows_per_page > 0 else 0)
+
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    page_number = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1)
+                with col2:
+                    st.caption(f"Displaying page {page_number} of {total_pages} ({total_rows} total records)")
+
+                start_idx = (page_number - 1) * rows_per_page
+                end_idx = start_idx + rows_per_page
+                paginated_df = display_df.iloc[start_idx:end_idx]
+                
+                st.dataframe(paginated_df, use_container_width=True)
 
 
     with tab3:
