@@ -70,7 +70,7 @@ def send_email_alert(subject, body):
     user_email = st.session_state.get('user_email', '').strip()
     recipient = user_email if user_email else EMAIL_RECEIVER_ADDRESS
 
-    if not all([EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, recipient]) or not user_email:
+    if not all([EMAIL_SENDER_ADDRESS, EMAIL_SENDER_PASSWORD, recipient]):
         st.warning("Email credentials not fully configured. Skipping email alert.")
         return
 
@@ -94,7 +94,7 @@ def send_telegram_alert(message):
     user_chat_id = st.session_state.get('user_telegram_id', '').strip()
     chat_id = user_chat_id if user_chat_id else TELEGRAM_CHAT_ID
 
-    if not all([TELEGRAM_BOT_TOKEN, chat_id]) or not user_chat_id:
+    if not all([TELEGRAM_BOT_TOKEN, chat_id]):
         st.warning("Telegram credentials not fully configured. Skipping Telegram alert.")
         return
 
@@ -168,6 +168,82 @@ def load_alert_logs(_client: Client):
         # If the table doesn't exist, just return an empty DataFrame.
         return pd.DataFrame()
 
+# --- Alerting Logic ---
+def check_market_cap_overtakes(new_data_df: pd.DataFrame, _client: Client):
+    """Compares the new market cap ranking with the previous one and alerts on any upward movement."""
+    try:
+        # Get the previous latest records for comparison
+        response = _client.rpc('get_latest_coin_data', {}).execute()
+        last_market_caps_df = pd.DataFrame(response.data)
+
+        if last_market_caps_df.empty:
+            print("ℹ️ Not enough historical data to check for market cap overtakes.")
+            return
+
+        # Establish the old and new rankings
+        old_ranking_df = last_market_caps_df.sort_values(by='market_cap', ascending=False).reset_index(drop=True)
+        new_ranking_df = new_data_df[['coin_id', 'name']].copy().reset_index() # The index is the new rank
+
+        # Create a map of coin_id to its old rank for easy lookup
+        old_rank_map = {row.coin_id: index for index, row in old_ranking_df.iterrows()}
+
+        # Compare new ranks to old ranks
+        for _, new_row in new_ranking_df.iterrows():
+            coin_id = new_row['coin_id']
+            new_rank = new_row['index']
+            old_rank = old_rank_map.get(coin_id)
+
+            if old_rank is not None and new_rank < old_rank:
+                coin_name = new_row['name']
+                overtaken_coin_id = old_ranking_df.iloc[new_rank]['coin_id']
+                overtaken_coin_name = new_ranking_df.query(f"coin_id == '{overtaken_coin_id}'")['name'].iloc[0]
+                send_alert(f"🚀 MARKET CAP ALERT: {coin_name} (now #{new_rank + 1}) has overtaken {overtaken_coin_name} (was #{new_rank + 1})!")
+    except Exception as e:
+        st.warning(f"Could not check market cap overtakes: {e}")
+
+def check_price_volume_alerts(new_data_df: pd.DataFrame, _client: Client):
+    """Checks for price drops or volume spikes against data from a configurable timeframe."""
+    try:
+        lookback_timestamp = (datetime.utcnow() - timedelta(hours=ALERT_TIMEFRAME_HOURS)).isoformat()
+
+        for _, row in new_data_df.iterrows():
+            coin_id = row['coin_id']
+            current_price = row['current_price']
+            current_volume = row['total_volume']
+
+            # Get the most recent record from *before* the lookback period
+            response = _client.table('coin_price_data') \
+                .select('current_price, total_volume') \
+                .eq('coin_id', coin_id) \
+                .lte('ingestion_timestamp', lookback_timestamp) \
+                .order('ingestion_timestamp', desc=True) \
+                .limit(1) \
+                .execute()
+
+            if response.data:
+                baseline_record = response.data[0]
+                last_price = baseline_record.get('current_price')
+                last_volume = baseline_record.get('total_volume')
+
+                # 1. Check for significant price drop
+                if last_price and last_price > 0:
+                    price_change_pct = ((current_price - last_price) / last_price) * 100
+                    if price_change_pct <= PRICE_DROP_ALERT_PERCENTAGE:
+                        send_alert(f"🚨 PRICE DROP: {coin_id.upper()} dropped by {price_change_pct:.2f}% to ${current_price:,.2f} in the last {ALERT_TIMEFRAME_HOURS}h.")
+
+                # 2. Check for sudden volume spike
+                if last_volume and last_volume > 0:
+                    volume_change_pct = ((current_volume - last_volume) / last_volume) * 100
+                    if volume_change_pct >= VOLUME_SPIKE_ALERT_PERCENTAGE:
+                        send_alert(f"📈 VOLUME SPIKE: {coin_id.upper()} volume up by {volume_change_pct:.2f}% in the last {ALERT_TIMEFRAME_HOURS}h.")
+            
+            # 3. Check for 24h percentage change (from API)
+            price_change_24h = row.get('price_change_percentage_24h')
+            if price_change_24h and price_change_24h <= -10.0:
+                 send_alert(f"📉 24H CHANGE: {coin_id.upper()} is down {price_change_24h:.2f}% in the last 24 hours.")
+    except Exception as e:
+        st.warning(f"Could not check price/volume alerts: {e}")
+
 # --- Pipeline Logic (Integrated into the app) ---
 @st.cache_data(ttl=300) # Run this logic at most once every 5 minutes
 def run_pipeline_logic(_client: Client):
@@ -196,9 +272,9 @@ def run_pipeline_logic(_client: Client):
         df = df[['id', 'symbol', 'name', 'current_price', 'market_cap', 'total_volume', 'price_change_percentage_24h', 'last_updated', 'ingestion_timestamp']]
         df.columns = ['coin_id', 'symbol', 'name', 'current_price', 'market_cap', 'total_volume', 'price_change_percentage_24h', 'last_updated', 'ingestion_timestamp']
 
-        # --- Run Alert Checks (Simplified for brevity, can be expanded) ---
-        # check_market_cap_overtakes(df, _engine)
-        # check_alerts(df, _engine)
+        # --- Run Full Alert Checks ---
+        check_market_cap_overtakes(df, _client)
+        check_price_volume_alerts(df, _client)
         
         # Append new data to the database table
         records_to_insert = df.to_dict(orient='records')
