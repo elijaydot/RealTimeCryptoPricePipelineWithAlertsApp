@@ -34,165 +34,53 @@ This project demonstrates a complete end-to-end data engineering pipeline that:
 ### System Architecture Diagram
 
 ```mermaid
-flowchart TB
-    subgraph External["🌐 EXTERNAL DATA SOURCE"]
-        API[("CoinGecko API<br/>REST Endpoint<br/>/coins/markets")]
+flowchart LR
+    subgraph External["🌐 EXTERNAL"]
+        API["CoinGecko API<br/>Market Data"]
     end
 
-    subgraph Pipeline["⚙️ DATA PIPELINE LAYER"]
-        subgraph Ingestion["1️⃣ Data Ingestion"]
-            Fetch["Fetch API Data<br/>requests.get()<br/>Every 60 seconds"]
-            Validate1["HTTP Response<br/>Validation<br/>raise_for_status()"]
-        end
-
-        subgraph Validation["2️⃣ Data Validation"]
-            Schema["Schema Check<br/>Required columns:<br/>id, price, market_cap"]
-            Null["Null Value Check<br/>Reject incomplete<br/>records"]
-            Type["Data Type<br/>Validation<br/>Numeric checks"]
-        end
-
-        subgraph Transform["3️⃣ Data Transformation"]
-            Normalize["JSON Normalize<br/>pd.json_normalize()<br/>Flatten nested data"]
-            Rename["Column Renaming<br/>coin_id, current_price<br/>market_cap, etc."]
-            Timestamp["UTC Timestamp<br/>ingestion_timestamp<br/>datetime.utcnow()"]
-        end
-
-        subgraph Alert["4️⃣ Alert Processing"]
-            MarketCap["Market Cap<br/>Ranking Check<br/>Detect overtakes"]
-            Price["Price Drop<br/>Detection<br/>≥5% threshold"]
-            Volume["Volume Spike<br/>Detection<br/>≥50% threshold"]
-            Change24h["24h Change<br/>Monitor<br/>≥10% drops"]
-        end
-
-        subgraph Load["5️⃣ Data Loading"]
-            Insert["Insert Records<br/>to_dict(orient='records')<br/>Append to table"]
-            ErrorLog["Error Logging<br/>Log API failures<br/>to error table"]
-        end
+    subgraph Pipeline["⚙️ DATA PIPELINE"]
+        Ingest["1. Ingest<br/>REST API<br/>60s interval"]
+        Validate["2. Validate<br/>Schema + Nulls"]
+        Transform["3. Transform<br/>Normalize<br/>Timestamp"]
+        Alert["4. Alert Logic<br/>Price/Volume<br/>Market Cap"]
     end
 
-    subgraph Database["🗄️ DATABASE LAYER - PostgreSQL (Supabase)"]
-        subgraph Tables["Tables"]
-            PriceTable[("coin_price_data<br/>────────────<br/>• id (PK)<br/>• coin_id<br/>• symbol<br/>• name<br/>• current_price<br/>• market_cap<br/>• total_volume<br/>• price_change_24h<br/>• ingestion_timestamp<br/>────────────<br/>Indexes:<br/>idx_coin_timestamp<br/>idx_ingestion")]
-            ErrorTable[("api_error_logs<br/>────────────<br/>• id (PK)<br/>• error_message<br/>• source<br/>• timestamp<br/>────────────<br/>Index:<br/>idx_error_timestamp")]
-        end
-
-        subgraph Functions["RPC Functions"]
-            RPC["get_latest_coin_data()<br/>────────────<br/>Returns: Latest record<br/>per coin<br/>────────────<br/>Uses: DISTINCT ON<br/>Optimized query"]
-        end
+    subgraph Database["🗄️ DATABASE"]
+        Tables[("PostgreSQL<br/>────<br/>coin_price_data<br/>api_error_logs")]
+        RPC["RPC Function<br/>get_latest_coin_data()"]
     end
 
-    subgraph Application["🖥️ APPLICATION LAYER - Streamlit"]
-        subgraph Cache["Caching Strategy"]
-            ResourceCache["@st.cache_resource<br/>DB Connection<br/>Singleton pattern"]
-            DataCache["@st.cache_data(ttl=60)<br/>Query results<br/>60-second refresh"]
-        end
-
-        subgraph DataRetrieval["Data Retrieval"]
-            LoadPrice["load_price_data()<br/>30-day history<br/>Filtered by date"]
-            LoadLatest["load_latest_data()<br/>Latest per coin<br/>Via RPC function"]
-            LoadLogs["load_alert_logs()<br/>Error tracking<br/>Sorted by timestamp"]
-        end
-
-        subgraph UI["User Interface"]
-            Tab1["📊 Overview Tab<br/>────────────<br/>• Current prices<br/>• Market cap pie chart<br/>• 24h changes"]
-            Tab2["📈 Analysis Tab<br/>────────────<br/>• Line/Candlestick<br/>• Moving Averages<br/>• Bollinger Bands<br/>• Date range filter<br/>• CSV export"]
-            Tab3["🚨 Logs Tab<br/>────────────<br/>• API errors<br/>• Alert history<br/>• System health"]
-            Tab4["🔔 Alerts Tab<br/>────────────<br/>• Enable/disable<br/>• Personal config<br/>• Email & Telegram"]
-        end
-
-        subgraph Analytics["Analytics Engine"]
-            TechIndicators["Technical Indicators<br/>────────────<br/>• MA (5,10,20,50)<br/>• Bollinger Bands<br/>• OHLC resampling"]
-            Summary["Summary Stats<br/>────────────<br/>• Max/Min price<br/>• Period change %<br/>• Volume analysis"]
-        end
-
-        AutoRefresh["⏱️ Auto-Refresh<br/>streamlit_autorefresh<br/>65-second interval"]
+    subgraph App["🖥️ STREAMLIT APP"]
+        Cache["Cache Layer<br/>TTL: 60s"]
+        Viz["Visualization<br/>📊 Overview<br/>📈 Charts<br/>🚨 Logs"]
     end
 
-    subgraph Notifications["📢 NOTIFICATION CHANNELS"]
-        InApp["🔔 In-App Toast<br/>st.toast()<br/>Instant feedback"]
-        Email["📧 Email Alert<br/>SMTP (Gmail)<br/>smtplib.SMTP"]
-        Telegram["💬 Telegram Bot<br/>Bot API<br/>sendMessage endpoint"]
+    subgraph Alerts["📢 ALERTS"]
+        Channels["📧 Email<br/>💬 Telegram"]
     end
 
-    subgraph Config["⚙️ CONFIGURATION"]
-        Env["Environment Variables<br/>────────────<br/>• SUPABASE_URL<br/>• SUPABASE_KEY<br/>• EMAIL credentials<br/>• TELEGRAM tokens<br/>• Alert thresholds"]
-        Secrets["Streamlit Secrets<br/>────────────<br/>Fallback config<br/>Cloud deployment"]
-    end
+    API -->|JSON| Ingest
+    Ingest --> Validate
+    Validate --> Transform
+    Transform --> Alert
+    Alert --> Tables
+    Tables --> RPC
+    RPC --> Cache
+    Cache --> Viz
+    Alert --> Channels
 
-    %% Data Flow Connections
-    API -->|JSON Response| Fetch
-    Fetch --> Validate1
-    Validate1 --> Schema
-    Schema --> Null
-    Null --> Type
-    Type --> Normalize
-    Normalize --> Rename
-    Rename --> Timestamp
-    Timestamp --> MarketCap
-    Timestamp --> Price
-    Timestamp --> Volume
-    Timestamp --> Change24h
-    MarketCap --> Insert
-    Price --> Insert
-    Volume --> Insert
-    Change24h --> Insert
-    Insert --> PriceTable
-    Validate1 -->|Error| ErrorLog
-    ErrorLog --> ErrorTable
-
-    %% Database to Application
-    PriceTable --> RPC
-    RPC --> LoadLatest
-    PriceTable --> LoadPrice
-    ErrorTable --> LoadLogs
-    
-    %% Caching
-    ResourceCache -.->|Connection Pool| Database
-    DataCache -.->|Cache Control| DataRetrieval
-    
-    %% Data Retrieval to UI
-    LoadPrice --> Tab1
-    LoadPrice --> Tab2
-    LoadLatest --> Tab1
-    LoadLogs --> Tab3
-    
-    %% Analytics
-    LoadPrice --> TechIndicators
-    LoadPrice --> Summary
-    TechIndicators --> Tab2
-    Summary --> Tab2
-    
-    %% Alerts
-    MarketCap --> InApp
-    Price --> InApp
-    Volume --> InApp
-    Change24h --> InApp
-    InApp --> Email
-    InApp --> Telegram
-    
-    %% Configuration
-    Env -.->|Config| Pipeline
-    Env -.->|Config| Notifications
-    Secrets -.->|Fallback| Env
-    
-    %% Auto-refresh trigger
-    AutoRefresh -.->|Trigger| Pipeline
-    AutoRefresh -.->|Refresh| DataRetrieval
-
-    %% Styling
     classDef external fill:#e1f5ff,stroke:#01579b,stroke-width:2px
     classDef pipeline fill:#fff3e0,stroke:#e65100,stroke-width:2px
     classDef database fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
     classDef app fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
     classDef notify fill:#fce4ec,stroke:#880e4f,stroke-width:2px
-    classDef config fill:#fff9c4,stroke:#f57f17,stroke-width:2px
 
     class API external
-    class Fetch,Validate1,Schema,Null,Type,Normalize,Rename,Timestamp,MarketCap,Price,Volume,Change24h,Insert,ErrorLog pipeline
-    class PriceTable,ErrorTable,RPC database
-    class ResourceCache,DataCache,LoadPrice,LoadLatest,LoadLogs,Tab1,Tab2,Tab3,Tab4,TechIndicators,Summary,AutoRefresh app
-    class InApp,Email,Telegram notify
-    class Env,Secrets config
+    class Ingest,Validate,Transform,Alert pipeline
+    class Tables,RPC database
+    class Cache,Viz app
+    class Channels notify
 ```
 
 ### PostgreSQL RPC Function: `get_latest_coin_data`
@@ -252,8 +140,8 @@ $$ LANGUAGE plpgsql;
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/crypto-dashboard.git
-cd crypto-dashboard
+git clone https://github.com/elijaydot/RealTimeCryptoPricePipelineWithAlertsApp.git
+cd RealTimeCryptoPricePipelineWithAlertsApp
 ```
 
 2. **Create virtual environment**
@@ -443,17 +331,6 @@ def test_database_connection():
 - 🔔 **Alert Latency**: <2 seconds from detection to notification
 - 💾 **Data Storage**: ~8KB per coin per record
 
-### Scalability Analysis
-**Current Scale**: 5 coins × 1,440 updates/day = 7,200 records/day
-
-**Projected Scale**:
-| Coins | Records/Day | Storage/Month | Query Performance |
-|-------|-------------|---------------|-------------------|
-| 10 | 14,400 | ~35 MB | Excellent |
-| 50 | 72,000 | ~175 MB | Good |
-| 100 | 144,000 | ~350 MB | Requires indexing optimization |
-| 500 | 720,000 | ~1.7 GB | Requires partitioning |
-
 ---
 
 ## 🚀 Deployment
@@ -467,43 +344,19 @@ git commit -m "Initial commit"
 git push origin main
 ```
 
-2. **Deploy on Streamlit Cloud**
-   - Go to [share.streamlit.io](https://share.streamlit.io)
-   - Connect your GitHub repository
-   - Add secrets in the Streamlit dashboard (same as `.env`)
+2. **Deployed on Streamlit Cloud**
+   - Live [cryptopricealertsapp](https://cryptopricealertsapp.streamlit.app/)
 
 3. **Configure Secrets**
-In Streamlit Cloud dashboard, add:
+In Streamlit Cloud dashboard, 
+    - Connect your GitHub repository
+    - Add secrets in the Streamlit dashboard (same as `.env`)
 ```toml
 SUPABASE_URL = "your-url"
 SUPABASE_KEY = "your-key"
 ENABLE_EMAIL_ALERTS = "true"
 EMAIL_SENDER_ADDRESS = "your-email"
 # ... etc
-```
-
-### Docker Deployment
-
-```dockerfile
-# Dockerfile
-FROM python:3.9-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8501
-
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-```
-
-```bash
-# Build and run
-docker build -t crypto-dashboard .
-docker run -p 8501:8501 --env-file .env crypto-dashboard
 ```
 
 ---
@@ -612,7 +465,7 @@ Check: Date range includes data points
 ## 👤 Author
 
 **Your Name**
-- GitHub: [@yourusername](https://github.com/elijaydot)
+- GitHub: [@elijaydot](https://github.com/elijaydot)
 - LinkedIn: [Your LinkedIn](https://linkedin.com/in/elijaharemu)
 - Email: Elijah.Aremu@outlook.com
 
