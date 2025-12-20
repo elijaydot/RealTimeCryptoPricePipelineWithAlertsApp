@@ -531,7 +531,7 @@ else:
 
     with tab4:
         # --- Alert Management Tab ---
-        st.header("🔔 Configure Your Personal Alerts")
+        st.header("🔔 Configure Your Personal Alerts on Price & Volume spikes")
         st.write("Enable and configure email or Telegram alerts. Your settings are saved for your current session.")
 
         st.subheader("Email Alerts")

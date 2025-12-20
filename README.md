@@ -88,18 +88,7 @@ Optimized function to retrieve the most recent record for each coin.
 
 ```sql
 CREATE OR REPLACE FUNCTION get_latest_coin_data()
-RETURNS TABLE (
-    id INTEGER,
-    coin_id VARCHAR(50),
-    symbol VARCHAR(10),
-    name VARCHAR(100),
-    current_price DECIMAL(20, 8),
-    market_cap BIGINT,
-    total_volume BIGINT,
-    price_change_percentage_24h DECIMAL(10, 4),
-    last_updated TIMESTAMP,
-    ingestion_timestamp TIMESTAMP
-) AS $$
+RETURNS SETOF coin_price_data AS $$
 BEGIN
     RETURN QUERY
     SELECT DISTINCT ON (c.coin_id)
