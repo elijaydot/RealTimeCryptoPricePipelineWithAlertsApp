@@ -135,7 +135,7 @@ def load_price_data(_client: Client):
         response = _client.table('coin_price_data').select('*').gte('ingestion_timestamp', thirty_days_ago).order('ingestion_timestamp', desc=False).execute()
         df = pd.DataFrame(response.data)
         if not df.empty:
-            df['ingestion_timestamp'] = pd.to_datetime(df['ingestion_timestamp'])
+            df['ingestion_timestamp'] = pd.to_datetime(df['ingestion_timestamp'], format='mixed')
         return df
     except Exception as e:
         st.error(f"Failed to load price data: {e}")
