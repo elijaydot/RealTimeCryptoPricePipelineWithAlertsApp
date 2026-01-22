@@ -1,6 +1,6 @@
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -131,7 +131,7 @@ def load_price_data(_client: Client):
     if _client is None:
         return pd.DataFrame()
     try:
-        thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         response = _client.table('coin_price_data').select('*').gte('ingestion_timestamp', thirty_days_ago).order('ingestion_timestamp', desc=False).execute()
         df = pd.DataFrame(response.data)
         if not df.empty:
@@ -204,7 +204,7 @@ def check_market_cap_overtakes(new_data_df: pd.DataFrame, _client: Client):
 def check_price_volume_alerts(new_data_df: pd.DataFrame, _client: Client):
     """Checks for price drops or volume spikes against data from a configurable timeframe."""
     try:
-        lookback_timestamp = (datetime.utcnow() - timedelta(hours=ALERT_TIMEFRAME_HOURS)).isoformat()
+        lookback_timestamp = (datetime.now(timezone.utc) - timedelta(hours=ALERT_TIMEFRAME_HOURS)).isoformat()
 
         for _, row in new_data_df.iterrows():
             coin_id = row['coin_id']
@@ -245,12 +245,19 @@ def check_price_volume_alerts(new_data_df: pd.DataFrame, _client: Client):
         st.warning(f"Could not check price/volume alerts: {e}")
 
 # --- Pipeline Logic (Integrated into the app) ---
-@st.cache_data(ttl=300) # Run this logic at most once every 5 minutes
-def run_pipeline_logic(_client: Client):
+def run_pipeline_logic(_client: Client, force_run: bool = False):
     """Main function to fetch, process, store, and alert on crypto data."""
     if not _client:
         st.error("Pipeline logic skipped due to database connection failure.")
-        return "Pipeline Failed"
+        return "Pipeline Failed", False
+
+    # Manual Throttling (replacing @st.cache_data to avoid CacheReplayClosureError)
+    if not force_run:
+        last_run_ts = st.session_state.get('pipeline_last_run_ts')
+        if last_run_ts:
+            last_run = datetime.fromisoformat(last_run_ts)
+            if (datetime.now(timezone.utc) - last_run).total_seconds() < 300:
+                return f"Pipeline last run at {last_run.strftime('%H:%M:%S')} (Cached)", False
 
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {"vs_currency": "usd", "ids": "bitcoin,ethereum,solana,cardano,dogecoin", "order": "market_cap_desc"}
@@ -261,7 +268,7 @@ def run_pipeline_logic(_client: Client):
         data = response.json()
         
         df = pd.json_normalize(data)
-        df['ingestion_timestamp'] = datetime.utcnow().isoformat()
+        df['ingestion_timestamp'] = datetime.now(timezone.utc).isoformat()
 
         # --- Data Validation ---
         required_cols = ['id', 'current_price', 'market_cap', 'total_volume']
@@ -279,14 +286,15 @@ def run_pipeline_logic(_client: Client):
         # Append new data to the database table
         records_to_insert = df.to_dict(orient='records')
         _client.table('coin_price_data').insert(records_to_insert).execute()
-        return f"Pipeline run successful at {datetime.now().strftime('%H:%M:%S')}"
+        st.session_state['pipeline_last_run_ts'] = datetime.now(timezone.utc).isoformat()
+        return f"Pipeline run successful at {datetime.now(timezone.utc).strftime('%H:%M:%S')}", True
 
     except requests.exceptions.RequestException as e:
-        error_details = {"error_message": str(e), "source": "CoinGecko API", "timestamp": datetime.utcnow().isoformat()}
+        error_details = {"error_message": str(e), "source": "CoinGecko API", "timestamp": datetime.now(timezone.utc).isoformat()}
         _client.table('api_error_logs').insert(error_details).execute()
-        return f"API Error: {e}"
+        return f"API Error: {e}", True
     except Exception as e:
-        return f"An unexpected Error occurred in pipeline: {e}"
+        return f"An unexpected Error occurred in pipeline: {e}", True
 
 
 # --- Dashboard UI ---
@@ -306,11 +314,29 @@ if 'user_email' not in st.session_state:
 if 'user_telegram_id' not in st.session_state:
     st.session_state.user_telegram_id = "" # Initialize as empty
 
-# Load data
-# Trigger the pipeline logic. Caching ensures it doesn't run on every single interaction.
-pipeline_status = run_pipeline_logic(supabase_client)
+# --- Sidebar and Pipeline Execution ---
+st.sidebar.title("⚙️ Pipeline Control")
+
+# Default to a throttled run
+force_pipeline = False
+
+# Add a button to force the run
+if st.sidebar.button("🔄 Refresh Data Now"):
+    force_pipeline = True
+    st.toast("Requesting immediate data refresh...")
+
+# Trigger the pipeline logic.
+pipeline_status, pipeline_ran = run_pipeline_logic(supabase_client, force_run=force_pipeline)
 st.sidebar.write(pipeline_status)
 
+# If the pipeline was forced and ran, we need to clear caches and rerun the script
+if force_pipeline and pipeline_ran:
+    load_price_data.clear()
+    load_latest_data.clear()
+    load_alert_logs.clear()
+    st.rerun()
+
+# Load data (will be fresh if caches were just cleared)
 price_df = load_price_data(supabase_client)
 latest_df = load_latest_data(supabase_client)
 logs_df = load_alert_logs(supabase_client)
@@ -353,12 +379,12 @@ else:
         
         st.dataframe(
             latest_df_display.set_index('name'),
-            use_container_width=True
+            width="stretch"
         )
 
         st.subheader("Market Cap Distribution")
         pie_fig = px.pie(latest_df, values='market_cap', names='name', title='Market Cap Distribution')
-        st.plotly_chart(pie_fig, use_container_width=True)
+        st.plotly_chart(pie_fig, width="stretch")
 
     with tab2:
         # --- Price Analysis Tab ---
@@ -478,7 +504,7 @@ else:
                     fig = go.Figure() # Empty figure if no data
 
             fig.update_layout(xaxis_title="Time", yaxis_title="Price (USD)")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
             # --- Filtered Data Table ---
             st.subheader("Filtered Data View")
@@ -515,7 +541,7 @@ else:
                 end_idx = start_idx + rows_per_page
                 paginated_df = display_df.iloc[start_idx:end_idx]
                 
-                st.dataframe(paginated_df, use_container_width=True)
+                st.dataframe(paginated_df, width="stretch")
 
 
     with tab3:
@@ -524,7 +550,7 @@ else:
         if not logs_df.empty:
             st.dataframe(
                 logs_df.set_index('id'),
-                use_container_width=True
+                width="stretch"
             )
         else:
             st.info("No alerts or errors have been logged yet. Everything looks good!")
