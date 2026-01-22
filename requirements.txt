@@ -5,3 +5,9 @@ streamlit
 plotly
 streamlit-autorefresh
 supabase
+altair<6
+matplotlib
+numpy
+pandera
+pyarrow
+streamlit>=1.40.0
